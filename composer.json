@@ -1,0 +1,6 @@
+{
+    "name": "makehaven/appointment_enhancements",
+    "type": "drupal-custom-module",
+    "description": "Enhances the appointment form with custom JavaScript, and provides related views.",
+    "license": "GPL-2.0-or-later"
+}

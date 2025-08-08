@@ -1,0 +1,38 @@
+<?php
+
+/**
+ * @file
+ * Primary module hooks for Appointment Enhancements module.
+ */
+
+use Drupal\Core\Form\FormStateInterface;
+
+/**
+ * Implements hook_form_alter().
+ */
+function appointment_enhancements_form_alter(&$form, FormStateInterface $form_state, $form_id) {
+  // --- Enhancements for the Appointment Add Form ---
+  if ($form_id === 'node_appointment_form') {
+    // Attach the main JavaScript library for adding appointments.
+    $form['#attached']['library'][] = 'appointment_enhancements/appointment-add-form';
+
+    // Embed the view that provides reserved slot data for the JavaScript.
+    // This removes the need to manually place a block on the page.
+    $form['reserved_slots_data'] = [
+      '#type' => 'view',
+      '#name' => 'scheduled_appointment_slots', // The machine name of the View.
+      '#display_id' => 'appointment_slots_reserved', // The machine name of the View's block display.
+      '#arguments' => [], // Pass any necessary arguments here.
+      '#weight' => -10, // Place it high in the form structure.
+    ];
+    // Add a wrapper div to ensure our JS can always find the view, regardless of theme.
+    $form['reserved_slots_data']['#prefix'] = '<div id="scheduled-appointments-view-wrapper">';
+    $form['reserved_slots_data']['#suffix'] = '</div>';
+  }
+
+  // --- Enhancements for the Appointment Edit Form ---
+  if ($form_id === 'node_appointment_edit_form') {
+    // Attach the lightweight JavaScript library for editing appointments.
+    $form['#attached']['library'][] = 'appointment_enhancements/appointment-edit-form';
+  }
+}

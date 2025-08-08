@@ -1,0 +1,20 @@
+# appointment_enhancements.libraries.yml
+
+appointment-add-form:
+  version: 1.x
+  js:
+    js/appointment_add_form.js: {}
+  dependencies:
+    - core/jquery
+    - core/drupal
+    - core/drupalSettings
+    - core/once  
+
+appointment-edit-form:
+  version: 1.x
+  js:
+    js/appointment_edit_form.js: {}
+  dependencies:
+    - core/jquery
+    - core/drupal
+    - core/once 
