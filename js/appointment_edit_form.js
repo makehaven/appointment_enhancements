@@ -17,6 +17,11 @@
           $form.find('input[name="field_appointment_purpose"], #edit-field-appointment-slot input[type="checkbox"]').each(function() {
               $(this).prop('disabled', true);
           });
+
+          // On form submission, re-enable the fields so their values are submitted.
+          $form.on('submit', function() {
+            $form.find('input:disabled').prop('disabled', false);
+          });
         });
       }
     };
