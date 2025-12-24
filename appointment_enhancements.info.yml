@@ -1,7 +1,7 @@
 name: 'Appointment Enhancements'
 type: module
 description: 'Enhances the appointment form with custom JavaScript, and provides related views.'
-core_version_requirement: ^10
+core_version_requirement: ^10 || ^11
 package: Custom
 dependencies:
   - drupal:views
