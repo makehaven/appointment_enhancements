@@ -182,6 +182,17 @@
         badgesWrapper.before('<div id="' + hintId + '" style="display:none; margin-bottom:8px;"></div>');
       }
 
+      // Disable/enable non-pending checkboxes based on purpose.
+      function updateCheckboxAvailability() {
+        const purpose = form.find('input[name="field_appointment_purpose"]:checked').val();
+        badgesWrapper.find('input[type="checkbox"]').each(function () {
+          const tid = parseInt($(this).val(), 10);
+          if (!isNaN(tid) && !pendingTids.has(tid)) {
+            $(this).prop('disabled', purpose === 'checkout');
+          }
+        });
+      }
+
       function updateSummary() {
         const purpose = form.find('input[name="field_appointment_purpose"]:checked').val();
         const hintDiv = form.find('#' + hintId);
@@ -211,7 +222,11 @@
         }
       }
 
-      form.find('input[name="field_appointment_purpose"]').on('change', updateSummary);
+      form.find('input[name="field_appointment_purpose"]').on('change', function () {
+        updateCheckboxAvailability();
+        updateSummary();
+      });
+      updateCheckboxAvailability();
       updateSummary();
     }
 
