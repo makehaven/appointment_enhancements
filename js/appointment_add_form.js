@@ -127,8 +127,15 @@
         }
       }
   
-      // Attach event listeners and run initial check
-      purposeField.on('change', checkCoverage);
+      // When purpose changes away from checkout, clear any selected badges so
+      // stale selections can't trigger hidden validation errors on submit.
+      purposeField.on('change', function () {
+        const purpose = form.find('input[name="field_appointment_purpose"]:checked').val();
+        if (purpose !== 'checkout') {
+          badgeCheckboxes.prop('checked', false);
+        }
+        checkCoverage();
+      });
       badgeCheckboxes.on('change', checkCoverage);
       slotCheckboxes.on('change', checkCoverage);
       checkCoverage(); // Initial check on page load
