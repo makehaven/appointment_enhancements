@@ -153,6 +153,10 @@
     // --- Pending badge hints: annotate checkboxes and show summary ---
     function initializeBadgePendingHints(form) {
       const settings = (drupalSettings && drupalSettings.appointmentFacilitator) ? drupalSettings.appointmentFacilitator : {};
+
+      // Admins can select any badge — skip all pending-only hints and locks.
+      if (settings.bypassPendingCheck) return;
+
       const pendingTids = new Set((settings.pendingBadgeTids || []).map(Number));
       const pendingBadgeData = settings.pendingBadgeData || {};
       const allBadgeUrls = settings.allBadgeUrls || {};
