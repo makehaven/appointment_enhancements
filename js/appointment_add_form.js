@@ -15,6 +15,7 @@
           displaySlotTimes($form);
           disableReservedSlots($form);
           initializeSlotCoverageValidation($form);
+          initializeBadgePendingHints($form);
         });
       }
     };
@@ -149,4 +150,69 @@
       });
     }
   
+    // --- Pending badge hints: annotate checkboxes and show summary ---
+    function initializeBadgePendingHints(form) {
+      const settings = (drupalSettings && drupalSettings.appointmentFacilitator) ? drupalSettings.appointmentFacilitator : {};
+      const pendingTids = new Set((settings.pendingBadgeTids || []).map(Number));
+      const pendingBadgeData = settings.pendingBadgeData || {};
+      const allBadgeUrls = settings.allBadgeUrls || {};
+
+      const badgesWrapper = form.find('#edit-field-appointment-badges');
+      if (!badgesWrapper.length) return;
+
+      // Annotate each badge checkbox with pending status and a link.
+      badgesWrapper.find('input[type="checkbox"]').each(function () {
+        const tid = parseInt($(this).val(), 10);
+        if (isNaN(tid)) return;
+        const item = $(this).closest('.js-form-item');
+        if (item.find('.badge-status-hint').length) return;
+
+        if (pendingTids.has(tid)) {
+          item.append('<span class="badge-status-hint" style="color:#2e7d32; font-size:0.85em; margin-left:6px;">&#10003; pending</span>');
+        } else {
+          const url = allBadgeUrls[String(tid)];
+          const linkHtml = url ? ' &mdash; <a href="' + url + '" target="_blank" rel="noopener">view requirements</a>' : '';
+          item.append('<span class="badge-status-hint" style="color:#888; font-size:0.85em; margin-left:6px;">not pending' + linkHtml + '</span>');
+        }
+      });
+
+      // Summary box shown above the list when purpose = checkout.
+      const hintId = 'badge-pending-summary';
+      if (!form.find('#' + hintId).length) {
+        badgesWrapper.before('<div id="' + hintId + '" style="display:none; margin-bottom:8px;"></div>');
+      }
+
+      function updateSummary() {
+        const purpose = form.find('input[name="field_appointment_purpose"]:checked').val();
+        const hintDiv = form.find('#' + hintId);
+
+        if (purpose !== 'checkout') {
+          hintDiv.hide().html('');
+          return;
+        }
+
+        const keys = Object.keys(pendingBadgeData);
+        if (keys.length === 0) {
+          hintDiv.html(
+            '<p style="margin:0;padding:8px 12px;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;color:#664d03;">' +
+            'You have no badges currently pending. Badges must be pending on your profile before they can be checked out.' +
+            '</p>'
+          ).show();
+        } else {
+          const links = keys.map(function (tid) {
+            const b = pendingBadgeData[tid];
+            return '<a href="' + b.url + '" target="_blank" rel="noopener">' + b.label + '</a>';
+          }).join(', ');
+          hintDiv.html(
+            '<p style="margin:0;padding:8px 12px;background:#d1e7dd;border:1px solid #a3cfbb;border-radius:4px;color:#0a3622;">' +
+            'Your pending badges: ' + links +
+            '</p>'
+          ).show();
+        }
+      }
+
+      form.find('input[name="field_appointment_purpose"]').on('change', updateSummary);
+      updateSummary();
+    }
+
   })(jQuery, Drupal, once);
