@@ -15,6 +15,7 @@
           displaySlotTimes($form);
           disableReservedSlots($form);
           initializeSlotCoverageValidation($form);
+          initializeLargeSlotSelectionAdvisory($form);
           initializeBadgePendingHints($form);
         });
       }
@@ -23,6 +24,52 @@
     // ... (the rest of the functions in this file remain the same) ...
   
     // --- Function to display calculated times next to slot labels ---
+    function formatDisplayTime(date, timezone) {
+      const formatted = new Intl.DateTimeFormat('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: timezone
+      }).format(date);
+      return formatted.replace(/\s+/g, '').toLowerCase();
+    }
+
+    function resolveStartTimeDate(startTime, timezone) {
+      const trimmed = String(startTime).trim();
+
+      // Support Unix timestamps (seconds or milliseconds).
+      if (/^\d+$/.test(trimmed)) {
+        const numeric = parseInt(trimmed, 10);
+        const millis = numeric > 100000000000 ? numeric : numeric * 1000;
+        const byEpoch = new Date(millis);
+        if (!isNaN(byEpoch.getTime())) {
+          return byEpoch;
+        }
+      }
+
+      // Support clock strings such as "10:00am".
+      const timeParts = trimmed.match(/(\d+):(\d+)(am|pm)/i);
+      if (timeParts) {
+        const now = new Date();
+        let baseHours = parseInt(timeParts[1], 10);
+        const baseMinutes = parseInt(timeParts[2], 10);
+        if (timeParts[3].toLowerCase() === 'pm' && baseHours !== 12) baseHours += 12;
+        if (timeParts[3].toLowerCase() === 'am' && baseHours === 12) baseHours = 0;
+        const local = new Date(now.getFullYear(), now.getMonth(), now.getDate(), baseHours, baseMinutes, 0, 0);
+        if (!isNaN(local.getTime())) {
+          return local;
+        }
+      }
+
+      // Final fallback: native Date parser for ISO-like values.
+      const parsed = new Date(trimmed);
+      if (!isNaN(parsed.getTime())) {
+        return parsed;
+      }
+
+      return null;
+    }
+
     function displaySlotTimes(form) {
       const slotLabels = form.find('#edit-field-appointment-slot .form-item__label.option');
       if (!slotLabels.length) return;
@@ -30,29 +77,42 @@
       const urlParams = new URLSearchParams(window.location.search);
       const startTime = urlParams.get('start_time');
       if (!startTime) return;
-  
-      const timeParts = startTime.match(/(\d+):(\d+)(am|pm)/i);
-      if (!timeParts) return;
-  
-      let hours = parseInt(timeParts[1], 10);
-      let minutes = parseInt(timeParts[2], 10);
-      if (timeParts[3].toLowerCase() === 'pm' && hours !== 12) hours += 12;
-      if (timeParts[3].toLowerCase() === 'am' && hours === 12) hours = 0;
-  
-      const baseDate = new Date();
-      baseDate.setHours(hours, minutes, 0, 0);
+
+      const siteTimezone = (((window.drupalSettings || {}).appointment_facilitator || {}).siteTimezone) || 'America/New_York';
+      const baseDate = resolveStartTimeDate(startTime, siteTimezone);
+      if (!baseDate) return;
   
       slotLabels.each(function (index) {
-        const slotTime = new Date(baseDate.getTime() + (index * 30 * 60 * 1000));
-        const h = slotTime.getHours() % 12 || 12;
-        const m = String(slotTime.getMinutes()).padStart(2, '0');
-        const ampm = slotTime.getHours() >= 12 ? 'pm' : 'am';
+        const slotDate = new Date(baseDate.getTime() + (index * 30 * 60000));
+        const display = formatDisplayTime(slotDate, siteTimezone);
   
         // Prevent adding duplicate times on AJAX rebuilds
         if ($(this).find('.calculated-time').length === 0) {
-          $(this).append(`<span class="calculated-time" style="color:green; margin-left: 5px;">(${h}:${m}${ampm})</span>`);
+          $(this).append(`<span class="calculated-time" style="color:green; margin-left: 5px;">(${display})</span>`);
         }
       });
+    }
+
+    function initializeLargeSlotSelectionAdvisory(form) {
+      const slotCheckboxes = form.find('#edit-field-appointment-slot input[type="checkbox"]');
+      if (!slotCheckboxes.length) return;
+
+      const advisoryId = 'slot-consideration-message';
+      if (!form.find('#' + advisoryId).length) {
+        form.find('#edit-field-appointment-slot-wrapper').before(
+          '<div id="' + advisoryId + '" style="display:none; margin-bottom:10px; color:#664d03; background:#fff3cd; border:1px solid #ffecb5; border-radius:4px; padding:8px 12px;">' +
+          'You selected more than two slots. Facilitator time is valuable; please consider contacting your facilitator to confirm this amount of time works for them.' +
+          '</div>'
+        );
+      }
+
+      function updateAdvisory() {
+        const selectedCount = slotCheckboxes.filter(':checked').length;
+        form.find('#' + advisoryId).toggle(selectedCount > 2);
+      }
+
+      slotCheckboxes.on('change', updateAdvisory);
+      updateAdvisory();
     }
   
     // --- Function to disable slots that are already reserved ---
@@ -86,10 +146,63 @@
     }
   
     // --- Functions for validating slot coverage based on badge time ---
+    function extractBadgeMinutes(checkbox) {
+      const item = $(checkbox).closest('.js-form-item');
+      const label = item.find('label').first();
+
+      const minutesSpan = label.find('.views-field-field-badge-checkout-minutes .field-content').first();
+      if (minutesSpan.length) {
+        const minutesMatch = minutesSpan.text().match(/(\d+)/);
+        if (minutesMatch) {
+          return parseInt(minutesMatch[1], 10);
+        }
+      }
+
+      // Fallback for simplified label markup like "Panel Saw-5 Minutes".
+      const labelText = label.text().replace(/\s+/g, ' ').trim();
+      const labelMinutes = labelText.match(/(\d+)\s*minutes?/i);
+      if (labelMinutes) {
+        return parseInt(labelMinutes[1], 10);
+      }
+
+      return 0;
+    }
+
     function initializeSlotCoverageValidation(form) {
       const purposeField = form.find('input[name="field_appointment_purpose"]');
       const badgeCheckboxes = form.find('#edit-field-appointment-badges input[type="checkbox"]');
       const slotCheckboxes = form.find('#edit-field-appointment-slot input[type="checkbox"]');
+
+      slotCheckboxes.each(function () {
+        const slot = $(this);
+        if (slot.data('original-disabled') === undefined) {
+          slot.data('original-disabled', slot.prop('disabled'));
+        }
+      });
+
+      function applySlotSelectionLock(requiredSlots, selectedSlots, isCheckout) {
+        const shouldLock = isCheckout && requiredSlots > 0 && selectedSlots >= requiredSlots;
+        slotCheckboxes.each(function () {
+          const slot = $(this);
+          const originalDisabled = !!slot.data('original-disabled');
+          const checked = slot.is(':checked');
+
+          if (originalDisabled) {
+            return;
+          }
+
+          if (shouldLock && !checked) {
+            slot.prop('disabled', true);
+            slot.attr('data-slot-locked', '1');
+            slot.closest('.js-form-item').css({ opacity: '0.55' });
+          }
+          else if (slot.attr('data-slot-locked') === '1') {
+            slot.prop('disabled', false);
+            slot.removeAttr('data-slot-locked');
+            slot.closest('.js-form-item').css({ opacity: '' });
+          }
+        });
+      }
   
       function checkCoverage() {
         const purpose = form.find('input[name="field_appointment_purpose"]:checked').val();
@@ -98,29 +211,29 @@
   
         if (purpose !== 'checkout') {
           if (errorDiv.length) errorDiv.remove();
+          applySlotSelectionLock(0, 0, false);
           return true;
         }
   
         let totalBadgeMinutes = 0;
         badgeCheckboxes.filter(':checked').each(function () {
-          const label = $(this).closest('.js-form-item').find('label');
-          const minutesSpan = label.find('.views-field-field-badge-checkout-minutes .field-content');
-          if (minutesSpan.length) {
-            const minutesMatch = minutesSpan.text().match(/(\d+)/);
-            if (minutesMatch) totalBadgeMinutes += parseInt(minutesMatch[1], 10);
-          }
+          totalBadgeMinutes += extractBadgeMinutes(this);
         });
   
         const selectedSlots = slotCheckboxes.filter(':checked').length;
-        const totalSlotMinutes = selectedSlots * 30;
+        const requiredSlots = Math.max(1, Math.ceil(totalBadgeMinutes / 30));
+        applySlotSelectionLock(requiredSlots, selectedSlots, true);
   
         if (errorDiv.length === 0) {
           errorDiv = $(`<div id="${errorDivId}" style="color: red; margin-bottom: 10px;"></div>`);
           form.find('#edit-field-appointment-slot-wrapper').before(errorDiv);
         }
   
-        if (totalBadgeMinutes > totalSlotMinutes) {
-          errorDiv.text(`Please select enough slots (${totalSlotMinutes} min) to cover the required badge time of ${totalBadgeMinutes} minutes.`);
+        if (selectedSlots < requiredSlots) {
+          errorDiv.text(`Please select enough slots. You selected ${selectedSlots} slot(s); ${requiredSlots} required for the selected badges (${totalBadgeMinutes} min total).`);
+          return false;
+        } else if (selectedSlots > requiredSlots && totalBadgeMinutes > 0) {
+          errorDiv.text(`You have selected too many slots. You selected ${selectedSlots} slot(s); please select no more than ${requiredSlots} slot(s) for these badges.`);
           return false;
         } else {
           errorDiv.text('');
@@ -153,16 +266,42 @@
     // --- Pending badge hints: annotate checkboxes and show summary ---
     function initializeBadgePendingHints(form) {
       const settings = (drupalSettings && drupalSettings.appointmentFacilitator) ? drupalSettings.appointmentFacilitator : {};
+      const badgesWrapper = form.find('#edit-field-appointment-badges');
+      if (!badgesWrapper.length) return;
+
+      const badgesContainer = form.find('#edit-field-appointment-badges-wrapper').length
+        ? form.find('#edit-field-appointment-badges-wrapper')
+        : badgesWrapper.closest('fieldset, .js-form-wrapper, .form-wrapper');
+
+      const checkoutScopeId = 'badge-checkout-scope-message';
+      if (!form.find('#' + checkoutScopeId).length) {
+        form.find('#edit-field-appointment-slot-wrapper').before(
+          '<div id="' + checkoutScopeId + '" style="display:none; margin-bottom:10px; color:#0f5132; background:#d1e7dd; border:1px solid #badbcc; border-radius:4px; padding:8px 12px;">' +
+          'This appointment is for badge checkout. If you need broader advice or support beyond standard badging, please book a second appointment using General Informational / Advice.' +
+          '</div>'
+        );
+      }
+
+      function toggleBadgesByPurpose() {
+        const purpose = form.find('input[name="field_appointment_purpose"]:checked').val();
+        const isCheckout = purpose === 'checkout';
+        badgesContainer.toggle(isCheckout);
+        form.find('#' + checkoutScopeId).toggle(isCheckout);
+        if (!isCheckout) {
+          badgesWrapper.find('input[type="checkbox"]').prop('checked', false);
+        }
+      }
 
       // Admins can select any badge — skip all pending-only hints and locks.
-      if (settings.bypassPendingCheck) return;
+      if (settings.bypassPendingCheck) {
+        toggleBadgesByPurpose();
+        form.find('input[name="field_appointment_purpose"]').on('change', toggleBadgesByPurpose);
+        return;
+      }
 
       const pendingTids = new Set((settings.pendingBadgeTids || []).map(Number));
       const pendingBadgeData = settings.pendingBadgeData || {};
       const allBadgeUrls = settings.allBadgeUrls || {};
-
-      const badgesWrapper = form.find('#edit-field-appointment-badges');
-      if (!badgesWrapper.length) return;
 
       // Annotate each badge checkbox with pending status and a link.
       badgesWrapper.find('input[type="checkbox"]').each(function () {
@@ -227,9 +366,11 @@
       }
 
       form.find('input[name="field_appointment_purpose"]').on('change', function () {
+        toggleBadgesByPurpose();
         updateCheckboxAvailability();
         updateSummary();
       });
+      toggleBadgesByPurpose();
       updateCheckboxAvailability();
       updateSummary();
     }
