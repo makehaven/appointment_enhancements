@@ -180,6 +180,64 @@
         }
       });
 
+      function getInteractiveSlots() {
+        return slotCheckboxes.filter(function () {
+          return !$(this).data('original-disabled');
+        });
+      }
+
+      function getSelectedInteractiveIndexes() {
+        const selected = [];
+        getInteractiveSlots().each(function (index) {
+          if ($(this).is(':checked')) {
+            selected.push(index);
+          }
+        });
+        return selected;
+      }
+
+      function selectionWouldRemainConsecutive(candidateIndexes) {
+        if (candidateIndexes.length <= 1) {
+          return true;
+        }
+
+        const sorted = candidateIndexes.slice().sort(function (a, b) {
+          return a - b;
+        });
+
+        for (let i = 0; i < sorted.length - 1; i++) {
+          if (sorted[i + 1] - sorted[i] !== 1) {
+            return false;
+          }
+        }
+
+        return true;
+      }
+
+      function applyContiguousSelectionLock() {
+        const interactiveSlots = getInteractiveSlots();
+        const selectedIndexes = getSelectedInteractiveIndexes();
+
+        interactiveSlots.each(function (index) {
+          const slot = $(this);
+          if (slot.is(':checked')) {
+            return;
+          }
+
+          const originalDisabled = !!slot.data('original-disabled');
+          const lockedByCount = slot.attr('data-slot-locked') === '1';
+          const allowedByContiguous = selectionWouldRemainConsecutive(selectedIndexes.concat(index));
+          const shouldDisable = originalDisabled || lockedByCount || !allowedByContiguous;
+
+          slot.prop('disabled', shouldDisable);
+          if (shouldDisable) {
+            slot.closest('.js-form-item').css({ opacity: '0.55' });
+          } else if (!lockedByCount) {
+            slot.closest('.js-form-item').css({ opacity: '' });
+          }
+        });
+      }
+
       function applySlotSelectionLock(requiredSlots, selectedSlots, isCheckout) {
         const shouldLock = isCheckout && requiredSlots > 0 && selectedSlots >= requiredSlots;
         slotCheckboxes.each(function () {
@@ -199,19 +257,40 @@
           else if (slot.attr('data-slot-locked') === '1') {
             slot.prop('disabled', false);
             slot.removeAttr('data-slot-locked');
-            slot.closest('.js-form-item').css({ opacity: '' });
           }
         });
+
+        applyContiguousSelectionLock();
       }
   
       function checkCoverage() {
         const purpose = form.find('input[name="field_appointment_purpose"]:checked').val();
         const errorDivId = 'slot-error-message';
         let errorDiv = $(`#${errorDivId}`);
+        const hasNonConsecutiveSelection = !selectionWouldRemainConsecutive(getSelectedInteractiveIndexes());
   
+        if (errorDiv.length === 0) {
+          errorDiv = $(`<div id="${errorDivId}" style="color: red; margin-bottom: 10px;"></div>`);
+          form.find('#edit-field-appointment-slot-wrapper').before(errorDiv);
+        }
+
         if (purpose !== 'checkout') {
-          if (errorDiv.length) errorDiv.remove();
-          applySlotSelectionLock(0, 0, false);
+          slotCheckboxes.each(function () {
+            const slot = $(this);
+            if (!slot.data('original-disabled')) {
+              slot.prop('disabled', false);
+              slot.removeAttr('data-slot-locked');
+              slot.closest('.js-form-item').css({ opacity: '' });
+            }
+          });
+          applyContiguousSelectionLock();
+
+          if (hasNonConsecutiveSelection) {
+            errorDiv.text('Please select consecutive time slots. Non-consecutive slots are not allowed for a single appointment.');
+            return false;
+          }
+
+          errorDiv.text('');
           return true;
         }
   
@@ -223,14 +302,12 @@
         const selectedSlots = slotCheckboxes.filter(':checked').length;
         const requiredSlots = Math.max(1, Math.ceil(totalBadgeMinutes / 30));
         applySlotSelectionLock(requiredSlots, selectedSlots, true);
-  
-        if (errorDiv.length === 0) {
-          errorDiv = $(`<div id="${errorDivId}" style="color: red; margin-bottom: 10px;"></div>`);
-          form.find('#edit-field-appointment-slot-wrapper').before(errorDiv);
-        }
-  
+
         if (selectedSlots < requiredSlots) {
           errorDiv.text(`Please select enough slots. You selected ${selectedSlots} slot(s); ${requiredSlots} required for the selected badges (${totalBadgeMinutes} min total).`);
+          return false;
+        } else if (hasNonConsecutiveSelection) {
+          errorDiv.text('Please select consecutive time slots. Non-consecutive slots are not allowed for a single appointment.');
           return false;
         } else if (selectedSlots > requiredSlots && totalBadgeMinutes > 0) {
           errorDiv.text(`You have selected too many slots. You selected ${selectedSlots} slot(s); please select no more than ${requiredSlots} slot(s) for these badges.`);
