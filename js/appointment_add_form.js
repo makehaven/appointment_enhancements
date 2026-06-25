@@ -430,13 +430,14 @@
             '</p>'
           ).show();
         } else {
-          const links = keys.map(function (tid) {
-            const b = pendingBadgeData[tid];
-            return '<a href="' + b.url + '" target="_blank" rel="noopener">' + b.label + '</a>';
+          // Plain text, not links: linking each badge to its tool page let
+          // members click out of the booking form and abandon scheduling.
+          const names = keys.map(function (tid) {
+            return Drupal.checkPlain(pendingBadgeData[tid].label);
           }).join(', ');
           hintDiv.html(
             '<p style="margin:0;padding:8px 12px;background:#d1e7dd;border:1px solid #a3cfbb;border-radius:4px;color:#0a3622;">' +
-            'Your pending badges: ' + links +
+            'Your pending badges: ' + names +
             '</p>'
           ).show();
         }
