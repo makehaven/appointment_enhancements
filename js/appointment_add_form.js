@@ -147,6 +147,23 @@
   
     // --- Functions for validating slot coverage based on badge time ---
     function extractBadgeMinutes(checkbox) {
+      // badgeCheckoutMinutes (keyed by term id) is the authoritative source:
+      // it comes from the badge term's field_badge_checkout_minutes, the same
+      // value the server-side slot-coverage validation uses. The label-parsing
+      // paths below only apply to legacy views-rendered labels — the current
+      // selection handler renders plain term names with no minutes text, and
+      // treating a parse miss as 0 minutes locks members out of ever selecting
+      // the slot count the server requires.
+      const settings = (window.drupalSettings || {}).appointmentFacilitator || {};
+      const minutesByTid = settings.badgeCheckoutMinutes || {};
+      const tid = String($(checkbox).val());
+      if (Object.prototype.hasOwnProperty.call(minutesByTid, tid)) {
+        const minutes = parseInt(minutesByTid[tid], 10);
+        if (!isNaN(minutes)) {
+          return minutes;
+        }
+      }
+
       const item = $(checkbox).closest('.js-form-item');
       const label = item.find('label').first();
 
