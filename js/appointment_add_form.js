@@ -185,10 +185,45 @@
       return 0;
     }
 
+    // --- Slot guidance message: one element, three severities ---
+    // Members burned by the July 2026 slot-lock bug read any red text as "the
+    // form is still broken," so instructional states must not look like errors.
+    const SLOT_MESSAGE_STYLES = {
+      info: { color: '#055160', background: '#cff4fc', border: '1px solid #b6effb' },
+      warn: { color: '#664d03', background: '#fff3cd', border: '1px solid #ffecb5' },
+      error: { color: '#842029', background: '#f8d7da', border: '1px solid #f5c2c7' }
+    };
+
+    function setSlotMessage(errorDiv, text, level) {
+      if (!text) {
+        errorDiv.text('').hide();
+        return;
+      }
+      const style = SLOT_MESSAGE_STYLES[level] || SLOT_MESSAGE_STYLES.error;
+      errorDiv.text(text).css({
+        color: style.color,
+        background: style.background,
+        border: style.border,
+        'border-radius': '4px',
+        padding: '8px 12px',
+        'margin-bottom': '10px'
+      }).show();
+    }
+
     function initializeSlotCoverageValidation(form) {
       const purposeField = form.find('input[name="field_appointment_purpose"]');
       const badgeCheckboxes = form.find('#edit-field-appointment-badges input[type="checkbox"]');
       const slotCheckboxes = form.find('#edit-field-appointment-slot input[type="checkbox"]');
+      let submitAttempted = false;
+
+      const legendId = 'slot-availability-legend';
+      if (slotCheckboxes.length && !form.find('#' + legendId).length) {
+        form.find('#edit-field-appointment-slot-wrapper').after(
+          '<div id="' + legendId + '" style="margin-top:4px; margin-bottom:10px; color:#6c757d; font-size:0.85em;">' +
+          Drupal.t('Crossed-out times are already booked. When picking multiple slots they must be back-to-back, so times that would leave a gap grey out.') +
+          '</div>'
+        );
+      }
 
       slotCheckboxes.each(function () {
         const slot = $(this);
@@ -247,6 +282,11 @@
           const shouldDisable = originalDisabled || lockedByCount || !allowedByContiguous;
 
           slot.prop('disabled', shouldDisable);
+          if (!originalDisabled && !lockedByCount && !allowedByContiguous) {
+            slot.attr('title', Drupal.t('Not next to your selected time — slots must be back-to-back.'));
+          } else {
+            slot.removeAttr('title');
+          }
           if (shouldDisable) {
             slot.closest('.js-form-item').css({ opacity: '0.55' });
           } else if (!lockedByCount) {
@@ -285,9 +325,9 @@
         const errorDivId = 'slot-error-message';
         let errorDiv = $(`#${errorDivId}`);
         const hasNonConsecutiveSelection = !selectionWouldRemainConsecutive(getSelectedInteractiveIndexes());
-  
+
         if (errorDiv.length === 0) {
-          errorDiv = $(`<div id="${errorDivId}" style="color: red; margin-bottom: 10px;"></div>`);
+          errorDiv = $(`<div id="${errorDivId}" style="display:none; margin-bottom: 10px;"></div>`);
           form.find('#edit-field-appointment-slot-wrapper').before(errorDiv);
         }
 
@@ -303,34 +343,53 @@
           applyContiguousSelectionLock();
 
           if (hasNonConsecutiveSelection) {
-            errorDiv.text('Please select consecutive time slots. Non-consecutive slots are not allowed for a single appointment.');
+            setSlotMessage(errorDiv, Drupal.t('Time slots must be back-to-back. Please adjust your selection so the times touch.'), 'error');
             return false;
           }
 
-          errorDiv.text('');
+          setSlotMessage(errorDiv, '', 'info');
           return true;
         }
-  
+
         let totalBadgeMinutes = 0;
-        badgeCheckboxes.filter(':checked').each(function () {
+        const selectedBadges = badgeCheckboxes.filter(':checked');
+        selectedBadges.each(function () {
           totalBadgeMinutes += extractBadgeMinutes(this);
         });
-  
+
         const selectedSlots = slotCheckboxes.filter(':checked').length;
         const requiredSlots = Math.max(1, Math.ceil(totalBadgeMinutes / 30));
         applySlotSelectionLock(requiredSlots, selectedSlots, true);
 
         if (selectedSlots < requiredSlots) {
-          errorDiv.text(`Please select enough slots. You selected ${selectedSlots} slot(s); ${requiredSlots} required for the selected badges (${totalBadgeMinutes} min total).`);
+          // Instruction, not error: nothing is wrong until the member tries to
+          // save. Red-before-any-mistake reads as "the form is broken."
+          if (selectedBadges.length === 0) {
+            setSlotMessage(errorDiv, Drupal.t('First choose the badge you are checking out above, then pick your time slot(s) below.'), submitAttempted ? 'error' : 'info');
+          }
+          else if (selectedSlots === 0) {
+            setSlotMessage(errorDiv, Drupal.formatPlural(requiredSlots,
+              'This badge checkout takes @minutes minutes: select 1 time slot below.',
+              'This badge checkout takes @minutes minutes: select @count back-to-back time slots below.',
+              { '@minutes': totalBadgeMinutes }), submitAttempted ? 'error' : 'info');
+          }
+          else {
+            const remaining = requiredSlots - selectedSlots;
+            setSlotMessage(errorDiv, Drupal.formatPlural(remaining,
+              'Almost there: pick 1 more time slot next to the one you chose (@selected of @required selected).',
+              'Almost there: pick @count more back-to-back time slots (@selected of @required selected).',
+              { '@selected': selectedSlots, '@required': requiredSlots }), submitAttempted ? 'error' : 'warn');
+          }
           return false;
         } else if (hasNonConsecutiveSelection) {
-          errorDiv.text('Please select consecutive time slots. Non-consecutive slots are not allowed for a single appointment.');
+          setSlotMessage(errorDiv, Drupal.t('Time slots must be back-to-back. Please adjust your selection so the times touch.'), 'error');
           return false;
         } else if (selectedSlots > requiredSlots && totalBadgeMinutes > 0) {
-          errorDiv.text(`You have selected too many slots. You selected ${selectedSlots} slot(s); please select no more than ${requiredSlots} slot(s) for these badges.`);
+          setSlotMessage(errorDiv, Drupal.t('You have selected too many slots. You selected @selected slot(s); please select no more than @required slot(s) for these badges.', { '@selected': selectedSlots, '@required': requiredSlots }), 'error');
           return false;
         } else {
-          errorDiv.text('');
+          submitAttempted = false;
+          setSlotMessage(errorDiv, '', 'info');
           return true;
         }
       }
@@ -348,11 +407,23 @@
       slotCheckboxes.on('change', checkCoverage);
       checkCoverage(); // Initial check on page load
   
-      // Validate on form submission
+      // Validate on form submission. No alert(): show the reason inline in
+      // error styling and bring it into view so the blocked Save is explained
+      // where the member is looking.
       form.on('submit', function (event) {
+        submitAttempted = true;
         if (!checkCoverage()) {
           event.preventDefault();
-          alert('Please select enough time slots to cover the total required time for the selected badges.');
+          const errorDiv = $('#slot-error-message');
+          if (errorDiv.length) {
+            if (errorDiv[0].scrollIntoView) {
+              errorDiv[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+            errorDiv.css('box-shadow', '0 0 0 3px rgba(220, 53, 69, 0.5)');
+            setTimeout(function () {
+              errorDiv.css('box-shadow', '');
+            }, 1500);
+          }
         }
       });
     }
@@ -444,6 +515,34 @@
           hintDiv.html(
             '<p style="margin:0;padding:8px 12px;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;color:#664d03;">' +
             'You have no badges currently pending. Badges must be pending on your profile before they can be checked out.' +
+            '</p>'
+          ).show();
+          return;
+        }
+
+        // The badge list only offers what THIS facilitator can issue. If none
+        // of the member's pending badges made the list, every checkbox is
+        // disabled and the member is stuck with no explanation (seen with a
+        // member booking a sewing checkout under a facilitator who only
+        // issues Autoclave). Say so instead of leaving a wall of grey.
+        const offeredTids = new Set();
+        badgesWrapper.find('input[type="checkbox"]').each(function () {
+          const tid = parseInt($(this).val(), 10);
+          if (!isNaN(tid)) {
+            offeredTids.add(tid);
+          }
+        });
+        const pendingOffered = keys.filter(function (tid) {
+          return offeredTids.has(parseInt(tid, 10));
+        });
+
+        if (offeredTids.size > 0 && pendingOffered.length === 0) {
+          const pendingNames = keys.map(function (tid) {
+            return Drupal.checkPlain(pendingBadgeData[tid].label);
+          }).join(', ');
+          hintDiv.html(
+            '<p style="margin:0;padding:8px 12px;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;color:#664d03;">' +
+            Drupal.t('This facilitator cannot check out your pending badges (@badges). Please pick a session with a facilitator who offers your badge.', { '@badges': pendingNames }) +
             '</p>'
           ).show();
         } else {
