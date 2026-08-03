@@ -220,7 +220,7 @@
       if (slotCheckboxes.length && !form.find('#' + legendId).length) {
         form.find('#edit-field-appointment-slot-wrapper').after(
           '<div id="' + legendId + '" style="margin-top:4px; margin-bottom:10px; color:#6c757d; font-size:0.85em;">' +
-          Drupal.t('Crossed-out times are already booked. When picking multiple slots they must be back-to-back, so times that would leave a gap grey out.') +
+          Drupal.t('Crossed-out times are already booked. Greyed times are still open — click one to move your selection there.') +
           '</div>'
         );
       }
@@ -230,6 +230,74 @@
         if (slot.data('original-disabled') === undefined) {
           slot.data('original-disabled', slot.prop('disabled'));
         }
+      });
+
+      // Mirrors the requiredSlots computation in checkCoverage() so the
+      // click-to-swap handler agrees with the lock about window size.
+      function computeRequiredSlots() {
+        const purpose = form.find('input[name="field_appointment_purpose"]:checked').val();
+        if (purpose !== 'checkout') {
+          return 0;
+        }
+        let totalBadgeMinutes = 0;
+        badgeCheckboxes.filter(':checked').each(function () {
+          totalBadgeMinutes += extractBadgeMinutes(this);
+        });
+        return Math.max(1, Math.ceil(totalBadgeMinutes / 30));
+      }
+
+      // Click-to-swap: slots greyed by the selection lock (count reached, or
+      // not back-to-back) are still open times. Clicking one moves the whole
+      // selection window to anchor there, instead of forcing the member to
+      // figure out they must untick first. Reserved (crossed-out) slots keep
+      // ignoring clicks. Prompted by ledger #43638: members arriving from the
+      // schedules page with pre-selected slots read the grey as unavailable.
+      form.find('#edit-field-appointment-slot').on('click', '.js-form-item', function (event) {
+        const slot = $(this).find('input[type="checkbox"]').first();
+        if (!slot.length || !slot.prop('disabled') || slot.data('original-disabled')) {
+          return;
+        }
+        const required = computeRequiredSlots();
+        if (required < 1) {
+          return;
+        }
+        const interactive = getInteractiveSlots();
+        const clickedIndex = interactive.index(slot);
+        if (clickedIndex < 0) {
+          return;
+        }
+        // Anchor the window at the clicked slot; if it would run off the end
+        // of the list, slide it back so the clicked slot is the window's end.
+        let start = clickedIndex;
+        if (start + required > interactive.length) {
+          start = interactive.length - required;
+        }
+        if (start < 0) {
+          return;
+        }
+        event.preventDefault();
+        // Native dispatch (not jQuery trigger) so the prefill module's
+        // addEventListener('change') hears this too and marks the form
+        // touched. Uncheck the old window before checking the new one so the
+        // selection never transiently exceeds the required count.
+        const setNative = function (input, checked) {
+          if (input.checked === checked) {
+            return;
+          }
+          input.checked = checked;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        interactive.each(function (index) {
+          if (!(index >= start && index < start + required)) {
+            setNative(this, false);
+          }
+        });
+        interactive.each(function (index) {
+          if (index >= start && index < start + required) {
+            setNative(this, true);
+          }
+        });
       });
 
       function getInteractiveSlots() {
@@ -282,15 +350,22 @@
           const shouldDisable = originalDisabled || lockedByCount || !allowedByContiguous;
 
           slot.prop('disabled', shouldDisable);
-          if (!originalDisabled && !lockedByCount && !allowedByContiguous) {
-            slot.attr('title', Drupal.t('Not next to your selected time — slots must be back-to-back.'));
+          // A slot greyed only by the selection lock is still open — the
+          // click-to-swap handler moves the booking there, so invite the
+          // click instead of reading as "unavailable" (ledger #43638).
+          if (shouldDisable && !originalDisabled) {
+            // Disabled controls swallow clicks and hover; put the hint on the
+            // wrapper and let clicks fall through to it for click-to-swap.
+            slot.closest('.js-form-item').attr('title', Drupal.t('Open — click to move your booking to this time.'));
+            slot.css('pointer-events', 'none');
           } else {
-            slot.removeAttr('title');
+            slot.closest('.js-form-item').removeAttr('title');
+            slot.css('pointer-events', '');
           }
           if (shouldDisable) {
-            slot.closest('.js-form-item').css({ opacity: '0.55' });
+            slot.closest('.js-form-item').css({ opacity: '0.55', cursor: originalDisabled ? '' : 'pointer' });
           } else if (!lockedByCount) {
-            slot.closest('.js-form-item').css({ opacity: '' });
+            slot.closest('.js-form-item').css({ opacity: '', cursor: '' });
           }
         });
       }
