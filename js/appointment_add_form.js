@@ -34,7 +34,48 @@
       return formatted.replace(/\s+/g, '').toLowerCase();
     }
 
-    function resolveStartTimeDate(startTime, timezone) {
+    // Builds a Date for a wall-clock time in a named IANA timezone, regardless
+    // of the browser's own zone. Two-pass: guess the instant as if the wall
+    // clock were UTC, read that instant back in the target zone, and correct
+    // by the difference (handles DST because the correction is evaluated at
+    // the target instant).
+    function zonedDate(year, monthIndex, day, hours, minutes, timezone) {
+      const guess = Date.UTC(year, monthIndex, day, hours, minutes, 0, 0);
+      try {
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: timezone,
+          hour12: false,
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).formatToParts(new Date(guess));
+        const get = function (type) {
+          const part = parts.find(function (p) { return p.type === type; });
+          return part ? parseInt(part.value, 10) : 0;
+        };
+        // Some engines print midnight as "24".
+        const asZone = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour') % 24, get('minute'), get('second'));
+        return new Date(guess - (asZone - guess));
+      }
+      catch (e) {
+        return new Date(year, monthIndex, day, hours, minutes, 0, 0);
+      }
+    }
+
+    // The appointment's calendar day, as Y-M-D from the (hidden) date field or
+    // the URL, so the clock string is placed on the day it belongs to.
+    function resolveAppointmentDay(form) {
+      const fromField = form && form.find('input[name="field_appointment_date[0][value]"]').val();
+      const fromUrl = new URLSearchParams(window.location.search).get('date');
+      const raw = String(fromField || fromUrl || '').trim();
+      const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (m) {
+        return { year: parseInt(m[1], 10), monthIndex: parseInt(m[2], 10) - 1, day: parseInt(m[3], 10) };
+      }
+      const now = new Date();
+      return { year: now.getFullYear(), monthIndex: now.getMonth(), day: now.getDate() };
+    }
+
+    function resolveStartTimeDate(startTime, timezone, form) {
       const trimmed = String(startTime).trim();
 
       // Support Unix timestamps (seconds or milliseconds).
@@ -47,17 +88,22 @@
         }
       }
 
-      // Support clock strings such as "10:00am".
+      // Support clock strings such as "10:00am". The string is the facilitator's
+      // shift start in the SITE timezone (the schedules view formats it that
+      // way), so it must be placed in that zone — not the visitor's. Building
+      // it with `new Date(y, m, d, h, i)` used the device zone and then
+      // re-labelled in site time, which shifted every slot label by the
+      // device's offset from Eastern (a UTC-3 device read 8:00pm as 7:00pm).
       const timeParts = trimmed.match(/(\d+):(\d+)(am|pm)/i);
       if (timeParts) {
-        const now = new Date();
+        const day = resolveAppointmentDay(form);
         let baseHours = parseInt(timeParts[1], 10);
         const baseMinutes = parseInt(timeParts[2], 10);
         if (timeParts[3].toLowerCase() === 'pm' && baseHours !== 12) baseHours += 12;
         if (timeParts[3].toLowerCase() === 'am' && baseHours === 12) baseHours = 0;
-        const local = new Date(now.getFullYear(), now.getMonth(), now.getDate(), baseHours, baseMinutes, 0, 0);
-        if (!isNaN(local.getTime())) {
-          return local;
+        const zoned = zonedDate(day.year, day.monthIndex, day.day, baseHours, baseMinutes, timezone);
+        if (!isNaN(zoned.getTime())) {
+          return zoned;
         }
       }
 
@@ -79,7 +125,7 @@
       if (!startTime) return;
 
       const siteTimezone = (((window.drupalSettings || {}).appointment_facilitator || {}).siteTimezone) || 'America/New_York';
-      const baseDate = resolveStartTimeDate(startTime, siteTimezone);
+      const baseDate = resolveStartTimeDate(startTime, siteTimezone, form);
       if (!baseDate) return;
   
       slotLabels.each(function (index) {
