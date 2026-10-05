@@ -278,18 +278,38 @@
         }
       });
 
-      // Mirrors the requiredSlots computation in checkCoverage() so the
-      // click-to-swap handler agrees with the lock about window size.
+      // The one place badge minutes are totalled; the lock, the click-to-swap
+      // handler and the coverage message all read it so they cannot drift
+      // apart. When the badge checkboxes are not on the page at all, fall back
+      // to the badges the server prefilled (?badge=) — the same values its
+      // coverage validation uses — instead of counting 0 minutes and locking
+      // the member at one slot (ledger #45782).
+      function selectedBadgeSummary() {
+        let minutes = 0;
+        let count = 0;
+        if (badgeCheckboxes.length) {
+          badgeCheckboxes.filter(':checked').each(function () {
+            minutes += extractBadgeMinutes(this);
+            count++;
+          });
+          return { minutes: minutes, count: count };
+        }
+        const settings = (window.drupalSettings || {}).appointmentFacilitator || {};
+        const minutesByTid = settings.badgeCheckoutMinutes || {};
+        (settings.defaultBadgeTids || []).forEach(function (tid) {
+          const value = parseInt(minutesByTid[String(tid)], 10);
+          minutes += isNaN(value) ? 0 : value;
+          count++;
+        });
+        return { minutes: minutes, count: count };
+      }
+
       function computeRequiredSlots() {
         const purpose = form.find('input[name="field_appointment_purpose"]:checked').val();
         if (purpose !== 'checkout') {
           return 0;
         }
-        let totalBadgeMinutes = 0;
-        badgeCheckboxes.filter(':checked').each(function () {
-          totalBadgeMinutes += extractBadgeMinutes(this);
-        });
-        return Math.max(1, Math.ceil(totalBadgeMinutes / 30));
+        return Math.max(1, Math.ceil(selectedBadgeSummary().minutes / 30));
       }
 
       // Click-to-swap: slots greyed by the selection lock (count reached, or
@@ -472,20 +492,16 @@
           return true;
         }
 
-        let totalBadgeMinutes = 0;
-        const selectedBadges = badgeCheckboxes.filter(':checked');
-        selectedBadges.each(function () {
-          totalBadgeMinutes += extractBadgeMinutes(this);
-        });
-
+        const badgeSummary = selectedBadgeSummary();
+        const totalBadgeMinutes = badgeSummary.minutes;
         const selectedSlots = slotCheckboxes.filter(':checked').length;
-        const requiredSlots = Math.max(1, Math.ceil(totalBadgeMinutes / 30));
+        const requiredSlots = computeRequiredSlots();
         applySlotSelectionLock(requiredSlots, selectedSlots, true);
 
         if (selectedSlots < requiredSlots) {
           // Instruction, not error: nothing is wrong until the member tries to
           // save. Red-before-any-mistake reads as "the form is broken."
-          if (selectedBadges.length === 0) {
+          if (badgeSummary.count === 0) {
             setSlotMessage(errorDiv, Drupal.t('First choose the badge you are checking out above, then pick your time slot(s) below.'), submitAttempted ? 'error' : 'info');
           }
           else if (selectedSlots === 0) {
